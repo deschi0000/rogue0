@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Star-Ace: Rogue Squadron Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #hud {
+            position: absolute; top: 20px; left: 20px; color: #00ff00;
+            pointer-events: none; text-shadow: 2px 2px #000; z-index: 10;
+        }
+        #reticle {
+            position: absolute; top: 50%; left: 50%;
+            width: 40px; height: 40px; border: 1px solid rgba(0, 255, 0, 0.5);
+            border-radius: 50%; transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #reticle::before, #reticle::after {
+            content: ''; position: absolute; background: #00ff00;
+        }
+        #reticle::before { top: 50%; left: -5px; width: 10px; height: 1px; }
+        #reticle::after { top: -5px; left: 50%; width: 1px; height: 10px; }
+
+        .overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; color: white; z-index: 100; text-align: center;
+        }
+        .hidden { display: none !important; }
+        button {
+            padding: 15px 30px; font-size: 1.2rem; background: #00ff00;
+            border: none; cursor: pointer; color: black; font-weight: bold; margin-top: 20px;
+        }
+        button:hover { background: #00cc00; }
+        h1 { font-size: 3rem; color: #00ff00; margin: 0; }
+        .stat { font-size: 1.2rem; margin: 5px 0; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+    <div id="hud">
+        <div class="stat">SPD: <span id="speed-val">0</span></div>
+        <div class="stat">SHD: <span id="shield-val">100</span>%</div>
+        <div class="stat">TGT: <span id="enemy-val">0</span></div>
+    </div>
+    <div id="reticle"></div>
+
+    <div id="pause-screen" class="overlay hidden">
+        <h1>PAUSED</h1>
+        <p>Use [WASD] to fly | [SPACE] to fire</p>
+        <button onclick="togglePause()">RESUME</button>
+    </div>
+
+    <div id="win-screen" class="overlay hidden">
+        <h1>MISSION ACCOMPLISHED</h1>
+        <p>The sector is clear.</p>
+        <button onclick="location.reload()">REPLAY</button>
+    </div>
+
+    <div id="lose-screen" class="overlay hidden">
+        <h1>SHIP DESTROYED</h1>
+        <p>You became one with the Force...</p>
+        <button onclick="location.reload()">RETRY</button>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Configuration ---
+        const BULLET_SPEED = 6;
+        const ENEMY_FIRE_RATE = 0.005; 
+        let isPaused = false;
+        let gameActive = true;
+
+        let scene, camera, renderer, player, clock;
+        let speed = 0.5;
+        let shields = 100;
+        let input = { w: false, s: false, a: false, d: false };
+        let mouse = { x: 0, y: 0 };
+        let bullets = [];
+        let enemies = [];
+        let obstacles = [];
+
+        init();
+        animate();
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.001);
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+            const sun = new THREE.DirectionalLight(0xffffff, 2);
+            sun.position.set(50, 50, 50);
+            scene.add(sun);
+
+            // --- X-Wing Detailed Model ---
+            player = new THREE.Group();
+            const mat = new THREE.MeshPhongMaterial({ color: 0xdddddd });
+            const redMat = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+            const cockpitMat = new THREE.MeshPhongMaterial({ color: 0x333333, transparent: true, opacity: 0.9 });
+
+            // Fuselage
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.4, 4, 8), mat);
+            body.rotation.x = Math.PI / 2;
+            player.add(body);
+
+            // Cockpit
+            const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2), cockpitMat);
+            cockpit.position.set(0, 0.15, 0.3);
+            cockpit.scale.set(1, 1, 1.8);
+            player.add(cockpit);
+
+            // S-Foil Builder
+            const createWing = (xSide, ySide, angle) => {
+                const wingGroup = new THREE.Group();
+                const wing = new THREE.Mesh(new THREE.BoxGeometry(2, 0.05, 1.2), mat);
+                wing.position.x = xSide * 1.2;
+                wingGroup.add(wing);
+
+                const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.07, 1.3), redMat);
+                stripe.position.set(xSide * 1.5, 0, 0);
+                wingGroup.add(stripe);
+
+                const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.8, 8), mat);
+                engine.rotation.x = Math.PI / 2;
+                engine.position.set(xSide * 0.4, 0, 0.5);
+                wingGroup.add(engine);
+
+                const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.5), mat);
+                cannon.rotation.x = Math.PI / 2;
+                cannon.position.set(xSide * 2, 0, -0.8);
+                wingGroup.add(cannon);
+
+                wingGroup.rotation.z = angle;
+                wingGroup.position.y = ySide * 0.1;
+                return wingGroup;
+            };
+
+            player.add(createWing(1, 1, 0.25));   
+            player.add(createWing(-1, 1, -0.25)); 
+            player.add(createWing(1, -1, -0.25)); 
+            player.add(createWing(-1, -1, 0.25)); 
+
+            scene.add(player);
+
+            camera.position.set(0, 2, 8); // Slightly further back to see the new model
+            player.add(camera);
+
+            // Environment
+            const starGeo = new THREE.BufferGeometry();
+            const starCoords = [];
+            for(let i=0; i<3000; i++) starCoords.push(THREE.MathUtils.randFloatSpread(1500), THREE.MathUtils.randFloatSpread(1500), THREE.MathUtils.randFloatSpread(1500));
+            starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starCoords, 3));
+            scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({color: 0xffffff, size: 1})));
+
+            for(let i=0; i<50; i++) {
+                const ast = new THREE.Mesh(new THREE.IcosahedronGeometry(Math.random()*15 + 5, 0), new THREE.MeshPhongMaterial({color: 0x444444, flatShading: true}));
+                ast.position.set(THREE.MathUtils.randFloatSpread(1000), THREE.MathUtils.randFloatSpread(1000), THREE.MathUtils.randFloatSpread(1000));
+                scene.add(ast);
+                obstacles.push(ast);
+            }
+
+            spawnEnemies(10);
+            clock = new THREE.Clock();
+
+            window.addEventListener('keydown', e => {
+                if(e.code === 'Escape') togglePause();
+                if(e.code === 'KeyW') input.w = true;
+                if(e.code === 'KeyS') input.s = true;
+                if(e.code === 'KeyA') input.a = true;
+                if(e.code === 'KeyD') input.d = true;
+                if(e.code === 'Space' && !isPaused) fireLaser(player, 0x00ff00, true);
+            });
+            window.addEventListener('keyup', e => {
+                if(e.code === 'KeyW') input.w = false;
+                if(e.code === 'KeyS') input.s = false;
+                if(e.code === 'KeyA') input.a = false;
+                if(e.code === 'KeyD') input.d = false;
+            });
+            window.addEventListener('mousemove', e => {
+                mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = (e.clientY / window.innerHeight) * 2 - 1;
+            });
+
+            window.togglePause = () => {
+                isPaused = !isPaused;
+                document.getElementById('pause-screen').classList.toggle('hidden', !isPaused);
+            };
+        }
+
+        function spawnEnemies(count) {
+            const geom = new THREE.SphereGeometry(1, 6, 6);
+            const wing = new THREE.BoxGeometry(0.1, 4, 3);
+            for(let i=0; i<count; i++) {
+                const en = new THREE.Group();
+                const core = new THREE.Mesh(geom, new THREE.MeshPhongMaterial({color: 0x333333}));
+                const w1 = new THREE.Mesh(wing, new THREE.MeshPhongMaterial({color: 0x111111}));
+                w1.position.x = 1.5;
+                const w2 = w1.clone(); w2.position.x = -1.5;
+                en.add(core, w1, w2);
+                en.position.set(THREE.MathUtils.randFloatSpread(600), THREE.MathUtils.randFloatSpread(600), THREE.MathUtils.randFloatSpread(600));
+                scene.add(en);
+                enemies.push({mesh: en, health: 1});
+            }
+        }
+
+        function fireLaser(source, color, isPlayer) {
+            const laser = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 2), new THREE.MeshBasicMaterial({color: color}));
+            laser.position.copy(source.position);
+            laser.quaternion.copy(source.quaternion);
+            scene.add(laser);
+            bullets.push({mesh: laser, life: 120, isPlayer: isPlayer});
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if(isPaused || !gameActive) return;
+
+            const dt = clock.getDelta();
+
+            if(input.w) speed = THREE.MathUtils.lerp(speed, 2.0, 0.1);
+            else if(input.s) speed = THREE.MathUtils.lerp(speed, 0.3, 0.1);
+            else speed = THREE.MathUtils.lerp(speed, 0.8, 0.05);
+
+            player.rotateX(mouse.y * 0.04); 
+            player.rotateY(-mouse.x * 0.04);
+            
+            if(input.a) player.rotateZ(0.05);
+            if(input.d) player.rotateZ(-0.05);
+
+            player.translateZ(-speed);
+
+            for(let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.mesh.translateZ(b.isPlayer ? -BULLET_SPEED : BULLET_SPEED);
+                b.life--;
+
+                if(b.isPlayer) {
+                    enemies.forEach((en, eIdx) => {
+                        if(b.mesh.position.distanceTo(en.mesh.position) < 4) {
+                            scene.remove(en.mesh);
+                            enemies.splice(eIdx, 1);
+                            b.life = 0;
+                        }
+                    });
+                } else {
+                    if(b.mesh.position.distanceTo(player.position) < 2) {
+                        shields -= 10;
+                        b.life = 0;
+                    }
+                }
+
+                if(b.life <= 0) {
+                    scene.remove(b.mesh);
+                    bullets.splice(i, 1);
+                }
+            }
+
+            enemies.forEach(en => {
+                en.mesh.lookAt(player.position);
+                en.mesh.translateZ(0.15);
+                if(Math.random() < ENEMY_FIRE_RATE) fireLaser(en.mesh, 0xff0000, false);
+            });
+
+            obstacles.forEach(obs => {
+                if(player.position.distanceTo(obs.position) < 15) {
+                    shields -= 1;
+                    player.translateZ(2);
+                }
+            });
+
+            if(shields <= 0 && gameActive) {
+                gameActive = false;
+                document.getElementById('lose-screen').classList.remove('hidden');
+            }
+            if(enemies.length === 0 && gameActive) {
+                gameActive = false;
+                document.getElementById('win-screen').classList.remove('hidden');
+            }
+
+            document.getElementById('speed-val').innerText = Math.round(speed * 100);
+            document.getElementById('shield-val').innerText = Math.max(0, Math.round(shields));
+            document.getElementById('enemy-val').innerText = enemies.length;
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
