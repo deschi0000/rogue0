@@ -5,23 +5,76 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Star-Ace: Rogue Squadron Edition</title>
     <style>
+        
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         #hud {
             position: absolute; top: 20px; left: 20px; color: #00ff00;
             pointer-events: none; text-shadow: 2px 2px #000; z-index: 10;
         }
+        
+        /* Hide cursor by default during gameplay */
+        canvas {
+            cursor: none;
+        }
+        /* Show cursor when an overlay (Pause, Win, Lose) is active */
+        .overlay:not(.hidden) ~ canvas, 
+        body:has(.overlay:not(.hidden)) {
+            cursor: auto;
+        }
+
+        /* Fallback: If your browser doesn't support :has, we'll use a class */
+        .show-cursor {
+            cursor: auto !important;
+        }
+
+        
+        #warning {
+            position: absolute; top: 20%; left: 50%; transform: translateX(-50%);
+            color: #ff0000; font-weight: bold; font-size: 2rem; display: none;
+            text-shadow: 0 0 10px #ff0000; z-index: 15;
+        }
+        /* UPDATED RETICLE CSS: Position is now handled by JS */
         #reticle {
-            position: absolute; top: 50%; left: 50%;
+            position: absolute; 
             width: 40px; height: 40px; border: 1px solid rgba(0, 255, 0, 0.5);
-            border-radius: 50%; transform: translate(-50%, -50%);
+            border-radius: 50%; 
             pointer-events: none;
+            z-index: 20;
         }
         #reticle::before, #reticle::after {
-            content: ''; position: absolute; background: #00ff00;
+            content: ''; position: absolute; background: none;
         }
-        #reticle::before { top: 50%; left: -5px; width: 10px; height: 1px; }
-        #reticle::after { top: -5px; left: 50%; width: 1px; height: 10px; }
+        /* #reticle::before { top: 50%; left: -5px; width: 10px; height: 1px; } */
+        /* #reticle::after { top: -5px; left: 50%; width: 1px; height: 10px; } */
+        
+        /* Vertical line (Top to Bottom) */
+        /* Vertical notches (Top and Bottom) */
+        #reticle::before { 
+            top: -8px; 
+            left: 50%; 
+            width: 1px; 
+            height: calc(100% + 16px); 
+            background: linear-gradient(to bottom, 
+                #00ff00 15%, 
+                transparent 15%, 
+                transparent 85%, 
+                #00ff00 85%
+            );
+        }
 
+        /* Horizontal notches (Left and Right) */
+        #reticle::after { 
+            top: 50%; 
+            left: -8px; 
+            width: calc(100% + 16px); 
+            height: 1px; 
+            background: linear-gradient(to right, 
+                #00ff00 15%, 
+                transparent 15%, 
+                transparent 85%, 
+                #00ff00 85%
+            );
+        }
         .overlay {
             position: fixed; inset: 0; background: rgba(0,0,0,0.8);
             display: flex; flex-direction: column; align-items: center;
@@ -44,7 +97,10 @@
         <div class="stat">SHD: <span id="shield-val">100</span>%</div>
         <div class="stat">TGT: <span id="enemy-val">0</span></div>
     </div>
+    <div id="warning">RETURNING TO BATTLE ZONE</div>
     <div id="reticle"></div>
+
+    <div id="damage-flash" style="position: fixed; inset: 0; background: rgba(229, 255, 0, 0.341); pointer-events: none; opacity: 0; z-index: 50; transition: opacity 0.1s;"></div>
 
     <div id="pause-screen" class="overlay hidden">
         <h1>PAUSED</h1>
@@ -73,68 +129,97 @@
 
         // --- Configuration ---
         const BULLET_SPEED = 6;
-        const ENEMY_FIRE_RATE = 0.005; 
+        const ENEMY_FIRE_RATE = 0.01; 
+        const BOUNDARY_RADIUS = 1600;
+        const ASTEROID_COUNT = 200;
+        const SAFE_ZONE_RADIUS = 120; 
+        const ENEMY_MAX_SPEED = 0.65;
+        const ENEMY_TURN_SPEED = 0.02; 
+        const ENEMY_SEPARATION_DIST = 30;
+
         let isPaused = false;
         let gameActive = true;
 
-        let scene, camera, renderer, player, clock;
-        let speed = 0.5;
+        let scene, camera, renderer, player, clock, boundary;
+        let speed = 0.8;
         let shields = 100;
         let input = { w: false, s: false, a: false, d: false };
         let mouse = { x: 0, y: 0 };
         let bullets = [];
         let enemies = [];
         let obstacles = [];
+        let engines = []; 
+        let laserIndex = 0;
+
+        // RETICLE TRACKING VARIABLES
+        let reticlePos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
         init();
         animate();
 
         function init() {
             scene = new THREE.Scene();
-            scene.fog = new THREE.FogExp2(0x000000, 0.001);
+            scene.fog = new THREE.FogExp2(0x000000, 0.0005);
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
             
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-            const sun = new THREE.DirectionalLight(0xffffff, 2);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+            const sun = new THREE.DirectionalLight(0xffffff, 1.5);
             sun.position.set(50, 50, 50);
             scene.add(sun);
 
-            // --- X-Wing Detailed Model ---
-            player = new THREE.Group();
-            const mat = new THREE.MeshPhongMaterial({ color: 0xdddddd });
-            const redMat = new THREE.MeshPhongMaterial({ color: 0xff0000 });
-            const cockpitMat = new THREE.MeshPhongMaterial({ color: 0x333333, transparent: true, opacity: 0.9 });
+            const boundaryGeo = new THREE.SphereGeometry(BOUNDARY_RADIUS, 32, 32);
+            const boundaryMat = new THREE.MeshBasicMaterial({ 
+                color: 0x00ffff, 
+                wireframe: true, 
+                transparent: true, 
+                opacity: 0.1 
+            });
+            boundary = new THREE.Mesh(boundaryGeo, boundaryMat);
+            scene.add(boundary);
 
-            // Fuselage
-            const body = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.4, 4, 8), mat);
+            player = new THREE.Group();
+            player.userData = { isTurning: false }; 
+            const mat = new THREE.MeshPhongMaterial({ color: 0xdddddd });
+            const cockpitMat = new THREE.MeshPhongMaterial({ color: 0x333333, transparent: true, opacity: 0.9 });
+            const engineGlowMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.2, 5, 5), mat);
             body.rotation.x = Math.PI / 2;
+            body.translateY(-1.8)
             player.add(body);
 
-            // Cockpit
             const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2), cockpitMat);
-            cockpit.position.set(0, 0.15, 0.3);
+            cockpit.position.set(0, 0.15, 0.1);
+            cockpit.translateZ(-0.5);
             cockpit.scale.set(1, 1, 1.8);
             player.add(cockpit);
 
-            // S-Foil Builder
             const createWing = (xSide, ySide, angle) => {
                 const wingGroup = new THREE.Group();
                 const wing = new THREE.Mesh(new THREE.BoxGeometry(2, 0.05, 1.2), mat);
                 wing.position.x = xSide * 1.2;
                 wingGroup.add(wing);
 
-                const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.07, 1.3), redMat);
-                stripe.position.set(xSide * 1.5, 0, 0);
-                wingGroup.add(stripe);
+                const engineGroup = new THREE.Group();
+                const engineBody = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.8, 8), mat);
+                engineBody.rotation.x = Math.PI / 2;
+                engineGroup.add(engineBody);
 
-                const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.8, 8), mat);
-                engine.rotation.x = Math.PI / 2;
-                engine.position.set(xSide * 0.4, 0, 0.5);
-                wingGroup.add(engine);
+                const glow = new THREE.Mesh(new THREE.CircleGeometry(0.15, 8), engineGlowMat);
+                glow.position.z = 0.41;
+                engineGroup.add(glow);
+                
+                const pLight = new THREE.PointLight(0x00ffff, 1, 5);
+                pLight.position.z = 0.5;
+                engineGroup.add(pLight);
+                engines.push({ light: pLight, mesh: glow });
+
+                engineGroup.position.set(xSide * 0.4, 0, 0.5);
+                wingGroup.add(engineGroup);
 
                 const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.5), mat);
                 cannon.rotation.x = Math.PI / 2;
@@ -152,20 +237,38 @@
             player.add(createWing(-1, -1, 0.25)); 
 
             scene.add(player);
-
-            camera.position.set(0, 2, 8); // Slightly further back to see the new model
+            camera.position.set(0, 2, 8); 
             player.add(camera);
 
-            // Environment
             const starGeo = new THREE.BufferGeometry();
             const starCoords = [];
-            for(let i=0; i<3000; i++) starCoords.push(THREE.MathUtils.randFloatSpread(1500), THREE.MathUtils.randFloatSpread(1500), THREE.MathUtils.randFloatSpread(1500));
+            for(let i=0; i<4000; i++) {
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos((Math.random() * 2) - 1);
+                const dist = 2000 + Math.random() * 1000; 
+                starCoords.push(dist * Math.sin(phi) * Math.cos(theta), dist * Math.sin(phi) * Math.sin(theta), dist * Math.cos(phi));
+            }
             starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starCoords, 3));
-            scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({color: 0xffffff, size: 1})));
+            scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({color: 0xffffff, size: 1.5})));
 
-            for(let i=0; i<50; i++) {
-                const ast = new THREE.Mesh(new THREE.IcosahedronGeometry(Math.random()*15 + 5, 0), new THREE.MeshPhongMaterial({color: 0x444444, flatShading: true}));
-                ast.position.set(THREE.MathUtils.randFloatSpread(1000), THREE.MathUtils.randFloatSpread(1000), THREE.MathUtils.randFloatSpread(1000));
+            for(let i=0; i<ASTEROID_COUNT; i++) {
+                const detail = Math.floor(Math.random() * 2);
+                const baseSize = Math.random() * 12 + 3;
+                const astGeo = new THREE.IcosahedronGeometry(baseSize, detail);
+                const astMat = new THREE.MeshPhongMaterial({
+                    color: 0x444444 + (Math.random() * 0x222222),
+                    flatShading: true
+                });
+                const ast = new THREE.Mesh(astGeo, astMat);
+                const scale = Math.random() * 2.5 + 0.5;
+                ast.scale.set(scale, scale, scale);
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos((Math.random() * 2) - 1);
+                const rawDist = Math.random(); 
+                const dist = Math.pow(rawDist, 1/3) * (BOUNDARY_RADIUS - 150);
+                const finalDist = Math.max(SAFE_ZONE_RADIUS + 50, dist);
+                ast.position.set(finalDist * Math.sin(phi) * Math.cos(theta), finalDist * Math.sin(phi) * Math.sin(theta), finalDist * Math.cos(phi));
+                ast.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
                 scene.add(ast);
                 obstacles.push(ast);
             }
@@ -179,7 +282,7 @@
                 if(e.code === 'KeyS') input.s = true;
                 if(e.code === 'KeyA') input.a = true;
                 if(e.code === 'KeyD') input.d = true;
-                if(e.code === 'Space' && !isPaused) fireLaser(player, 0x00ff00, true);
+                if(e.code === 'Space' && !isPaused && !player.userData.isTurning) fireLaser(player, 0xff0000, true);
             });
             window.addEventListener('keyup', e => {
                 if(e.code === 'KeyW') input.w = false;
@@ -208,18 +311,40 @@
                 w1.position.x = 1.5;
                 const w2 = w1.clone(); w2.position.x = -1.5;
                 en.add(core, w1, w2);
-                en.position.set(THREE.MathUtils.randFloatSpread(600), THREE.MathUtils.randFloatSpread(600), THREE.MathUtils.randFloatSpread(600));
+                const dist = Math.random() * (BOUNDARY_RADIUS - 200);
+                en.position.set(THREE.MathUtils.randFloatSpread(dist), THREE.MathUtils.randFloatSpread(dist), THREE.MathUtils.randFloatSpread(dist));
                 scene.add(en);
                 enemies.push({mesh: en, health: 1});
             }
         }
 
         function fireLaser(source, color, isPlayer) {
-            const laser = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 2), new THREE.MeshBasicMaterial({color: color}));
-            laser.position.copy(source.position);
-            laser.quaternion.copy(source.quaternion);
-            scene.add(laser);
-            bullets.push({mesh: laser, life: 120, isPlayer: isPlayer});
+            if (isPlayer) {
+                const wingTips = [];
+                source.traverse((child) => {
+                    if (child.isMesh && child.geometry.type === 'CylinderGeometry' && Math.abs(child.position.x) > 1.5) {
+                        wingTips.push(child);
+                    }
+                });
+                if (wingTips.length > 0) {
+                    wingTips.sort((a, b) => a.position.x - b.position.x);
+                    const activeTip = wingTips[laserIndex % wingTips.length];
+                    const laser = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 4), new THREE.MeshBasicMaterial({ color: color }));
+                    const tipPos = new THREE.Vector3();
+                    activeTip.getWorldPosition(tipPos);
+                    laser.position.copy(tipPos);
+                    laser.quaternion.copy(source.quaternion);
+                    scene.add(laser);
+                    bullets.push({ mesh: laser, life: 120, isPlayer: true });
+                    laserIndex++;
+                }
+            } else {
+                const laser = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 2), new THREE.MeshBasicMaterial({color: color}));
+                laser.position.copy(source.position);
+                laser.quaternion.copy(source.quaternion);
+                scene.add(laser);
+                bullets.push({mesh: laser, life: 120, isPlayer: false});
+            }
         }
 
         function animate() {
@@ -228,23 +353,118 @@
 
             const dt = clock.getDelta();
 
-            if(input.w) speed = THREE.MathUtils.lerp(speed, 2.0, 0.1);
-            else if(input.s) speed = THREE.MathUtils.lerp(speed, 0.3, 0.1);
-            else speed = THREE.MathUtils.lerp(speed, 0.8, 0.05);
-
-            player.rotateX(mouse.y * 0.04); 
-            player.rotateY(-mouse.x * 0.04);
+            // --- 1. DYNAMIC RETICLE LOGIC ---
+            const reticleEl = document.getElementById('reticle');
+            const intensity = 30; // How many pixels it moves
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
             
-            if(input.a) player.rotateZ(0.05);
-            if(input.d) player.rotateZ(-0.05);
+            // The reticle should move WITH the mouse to show where the ship is aiming.
+            // Since your ship steering uses -mouse.x and +mouse.y, we match that here.
+            // Horizontal (X): mouse.x is -1 (left) to 1 (right)
+            // Vertical (Y): we use -mouse.y because screen Y is 0 at the TOP
+            const targetX = centerX + (mouse.x * intensity);
+            const targetY = centerY + (mouse.y * -intensity); // Flipped this sign!
 
+            // Interpolate for smooth "floaty" feel
+            reticlePos.x = THREE.MathUtils.lerp(reticlePos.x, targetX, 0.1);
+            reticlePos.y = THREE.MathUtils.lerp(reticlePos.y, targetY, 0.1);
+
+            // Update UI (centered on the calculated point)
+            reticleEl.style.left = `${reticlePos.x - 20}px`;
+            reticleEl.style.top = `${reticlePos.y - 20}px`;
+
+
+            // Movement & Engine
+            let targetSpeed = 0.8;
+            if(input.w) targetSpeed = 2.5;
+            if(input.s) targetSpeed = 0.2;
+            speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.05);
+
+            camera.position.z = THREE.MathUtils.lerp(camera.position.z, 8 + (speed - 0.8) * 2.5, 0.05);
+            camera.fov = THREE.MathUtils.lerp(camera.fov, 75 + (speed * 4), 0.05);
+            camera.updateProjectionMatrix();
+
+            engines.forEach(eng => {
+                eng.light.intensity = THREE.MathUtils.lerp(eng.light.intensity, speed * 2, 0.1);
+                eng.mesh.scale.setScalar(THREE.MathUtils.lerp(eng.mesh.scale.x, 0.5 + speed * 0.5, 0.1));
+            });
+
+            // Steering Logic
+            if (!player.userData.isTurning) {
+                player.rotateX(mouse.y * 0.04); 
+                player.rotateY(-mouse.x * 0.04);
+                if(input.a) player.rotateZ(0.05);
+                if(input.d) player.rotateZ(-0.05);
+            }
             player.translateZ(-speed);
 
+            // Boundary Logic
+            const distFromCenter = player.position.length();
+            const warningEl = document.getElementById('warning');
+
+            if (distFromCenter > BOUNDARY_RADIUS && !player.userData.isTurning) {
+                player.userData.isTurning = true;
+                warningEl.style.display = 'block';
+            }
+
+            if (player.userData.isTurning) {
+                const dirToCenter = new THREE.Vector3(0,0,0).sub(player.position).normalize();
+                const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), dirToCenter);
+                player.quaternion.slerp(targetQuat, 0.03);
+                player.rotateZ(0.02);
+                boundary.material.color.setHex(0xff0000);
+                boundary.material.opacity = 0.4;
+                if (distFromCenter < BOUNDARY_RADIUS - 100) {
+                    player.userData.isTurning = false;
+                    warningEl.style.display = 'none';
+                    boundary.material.color.setHex(0x00ffff);
+                    boundary.material.opacity = 0.1;
+                }
+            }
+
+            // Enemy AI
+            enemies.forEach(en => {
+                const steerDir = new THREE.Vector3();
+                const desired = new THREE.Vector3().subVectors(player.position, en.mesh.position).normalize();
+                steerDir.add(desired.multiplyScalar(0.5));
+                const separation = new THREE.Vector3(0,0,0);
+                let neighbors = 0;
+                enemies.forEach(other => {
+                    if (other !== en) {
+                        const dist = en.mesh.position.distanceTo(other.mesh.position);
+                        if (dist < ENEMY_SEPARATION_DIST) {
+                            const diff = new THREE.Vector3().subVectors(en.mesh.position, other.mesh.position).normalize();
+                            separation.add(diff.divideScalar(dist));
+                            neighbors++;
+                        }
+                    }
+                });
+                if (neighbors > 0) steerDir.add(separation.multiplyScalar(2.0));
+                const forward = new THREE.Vector3(0,0,-1).applyQuaternion(en.mesh.quaternion);
+                const ray = new THREE.Raycaster(en.mesh.position, forward);
+                const hits = ray.intersectObjects(obstacles, false);
+                if(hits.length > 0 && hits[0].distance < 80) {
+                    const avoidance = new THREE.Vector3().subVectors(en.mesh.position, hits[0].object.position).normalize();
+                    steerDir.add(avoidance.multiplyScalar(4.0));
+                }
+                if(en.mesh.position.length() > BOUNDARY_RADIUS - 200) {
+                    const toCenter = new THREE.Vector3().negate().copy(en.mesh.position).normalize();
+                    steerDir.add(toCenter.multiplyScalar(5.0));
+                }
+                const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), steerDir.normalize());
+                en.mesh.quaternion.slerp(targetQuat, ENEMY_TURN_SPEED);
+                const localSteer = steerDir.clone().applyQuaternion(en.mesh.quaternion.clone().invert());
+                en.mesh.rotation.z = THREE.MathUtils.lerp(en.mesh.rotation.z, localSteer.x * 0.5, 0.05);
+                en.mesh.translateZ(-ENEMY_MAX_SPEED);
+                if(Math.random() < ENEMY_FIRE_RATE) fireLaser(en.mesh, 0x00ff00, false)
+            });
+
+            // Bullets
             for(let i = bullets.length - 1; i >= 0; i--) {
                 const b = bullets[i];
-                b.mesh.translateZ(b.isPlayer ? -BULLET_SPEED : BULLET_SPEED);
+                b.mesh.translateZ(-BULLET_SPEED); 
                 b.life--;
-
                 if(b.isPlayer) {
                     enemies.forEach((en, eIdx) => {
                         if(b.mesh.position.distanceTo(en.mesh.position) < 4) {
@@ -254,28 +474,28 @@
                         }
                     });
                 } else {
-                    if(b.mesh.position.distanceTo(player.position) < 2) {
+                    if(b.mesh.position.distanceTo(player.position) < 4) {
                         shields -= 10;
                         b.life = 0;
+                        const flash = document.getElementById('damage-flash');
+                        flash.style.opacity = "1"; 
+                        setTimeout(() => { flash.style.opacity = "0"; }, 100);
                     }
                 }
-
                 if(b.life <= 0) {
                     scene.remove(b.mesh);
                     bullets.splice(i, 1);
                 }
             }
 
-            enemies.forEach(en => {
-                en.mesh.lookAt(player.position);
-                en.mesh.translateZ(0.15);
-                if(Math.random() < ENEMY_FIRE_RATE) fireLaser(en.mesh, 0xff0000, false);
-            });
-
+            // Collisions
             obstacles.forEach(obs => {
-                if(player.position.distanceTo(obs.position) < 15) {
-                    shields -= 1;
-                    player.translateZ(2);
+                const hitRadius = (obs.geometry.parameters.radius * obs.scale.x) + 1.5;
+                if(player.position.distanceTo(obs.position) < hitRadius) {
+                    if (gameActive) {
+                        shields = 0;
+                        player.scale.set(0, 0, 0); 
+                    }
                 }
             });
 
