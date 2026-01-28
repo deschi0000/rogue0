@@ -241,17 +241,68 @@
             };
         }
 
+        // function spawnEnemies(count) {
+        //     // const geom = new THREE.SphereGeometry(1, 6, 6), wing = new THREE.BoxGeometry(0.1, 4, 3);
+        //     const geom = new THREE.SphereGeometry(1, 6, 6), wing = new THREE.BoxGeometry(0.2, 8, 6);
+        //     for(let i=0; i<count; i++) {
+        //         const en = new THREE.Group();
+        //         const core = new THREE.Mesh(geom, new THREE.MeshPhongMaterial({color: 0x333333}));
+        //         const w1 = new THREE.Mesh(wing, new THREE.MeshPhongMaterial({color: 0x111111})); w1.position.x = 1.5;
+        //         const w2 = w1.clone(); w2.position.x = -1.5;
+        //         en.add(core, w1, w2);
+        //         const dist = Math.random() * (BOUNDARY_RADIUS - 200);
+        //         en.position.set(THREE.MathUtils.randFloatSpread(dist), THREE.MathUtils.randFloatSpread(dist), THREE.MathUtils.randFloatSpread(dist));
+        //         scene.add(en); enemies.push({mesh: en, health: 1});
+        //     }
+        // }
+
         function spawnEnemies(count) {
-            const geom = new THREE.SphereGeometry(1, 6, 6), wing = new THREE.BoxGeometry(0.1, 4, 3);
+            // 1. Cockpit remains a sphere
+            const geom = new THREE.SphereGeometry(1, 8, 8); 
+            
+            // 2. Hexagonal Wings: (RadiusTop, RadiusBottom, Height, RadialSegments)
+            // Radius 2.2 gives it that tall wing look. Height 0.1 makes it a thin plate.
+            const wingGeom = new THREE.CylinderGeometry(3.2, 2.2, 0.1, 6); 
+            // 3. The Strut: (RadiusTop, RadiusBottom, Height/Length)
+            // Radius 0.25 makes it a thin tube; Height 4 matches your wing distance
+            const strutGeom = new THREE.CylinderGeometry(0.25, 0.25, 4, 8);
+            const darkMat = new THREE.MeshPhongMaterial({color: 0x333333});
+            const wingMat = new THREE.MeshPhongMaterial({color: 0x111111});
+
+
             for(let i=0; i<count; i++) {
                 const en = new THREE.Group();
-                const core = new THREE.Mesh(geom, new THREE.MeshPhongMaterial({color: 0x333333}));
-                const w1 = new THREE.Mesh(wing, new THREE.MeshPhongMaterial({color: 0x111111})); w1.position.x = 1.5;
-                const w2 = w1.clone(); w2.position.x = -1.5;
-                en.add(core, w1, w2);
+                
+                // Cockpit
+                const core = new THREE.Mesh(geom, darkMat);
+                en.add(core);
+
+                // 2. Add the Strut
+                const strut = new THREE.Mesh(strutGeom, darkMat);
+                strut.rotation.z = Math.PI / 2; // Lay it horizontal
+                en.add(strut);
+
+                // Left Wing
+                const w1 = new THREE.Mesh(wingGeom, wingMat);
+                w1.position.x = 2;
+                w1.rotation.z = Math.PI / 2; 
+                w1.rotation.x = Math.PI / 2; // Adjust this if you want the hexagon points up/down
+                en.add(w1);
+
+                // Right Wing
+                const w2 = w1.clone();
+                w2.position.x = -2;
+                en.add(w2);
+
+                // Random Spawn Logic
                 const dist = Math.random() * (BOUNDARY_RADIUS - 200);
-                en.position.set(THREE.MathUtils.randFloatSpread(dist), THREE.MathUtils.randFloatSpread(dist), THREE.MathUtils.randFloatSpread(dist));
-                scene.add(en); enemies.push({mesh: en, health: 1});
+                en.position.set(
+                    THREE.MathUtils.randFloatSpread(dist), 
+                    THREE.MathUtils.randFloatSpread(dist), 
+                    THREE.MathUtils.randFloatSpread(dist)
+                );
+                scene.add(en); 
+                enemies.push({mesh: en, health: 1});
             }
         }
 
