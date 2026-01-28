@@ -111,7 +111,7 @@
         
         let input = { w: false, s: false, a: false, d: false };
         let mouse = { x: 0, y: 0 };
-        let bullets = [], enemies = [], obstacles = [], engines = [], wingObjects = []; 
+        let bullets = [], enemies = [], obstacles = [], engines = [], wingObjects = [], particles = []; 
         let laserIndex = 0, reticlePos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
         init();
@@ -180,7 +180,6 @@
                 return wingGroup;
             };
 
-            // Initialize wings and store in wingObjects array
             wingObjects = [
                 createWing(1, 1, 0.25),   
                 createWing(-1, 1, -0.25), 
@@ -193,7 +192,6 @@
             camera.position.set(0, 2, 8); 
             player.add(camera);
 
-            // Stars & Asteroids
             const starGeo = new THREE.BufferGeometry();
             const starCoords = [];
             for(let i=0; i<4000; i++) {
@@ -254,6 +252,19 @@
             }
         }
 
+        function createExplosion(position, color) {
+            const particleCount = 20;
+            const geo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+            const mat = new THREE.MeshBasicMaterial({ color: color, transparent: true });
+            for (let i = 0; i < particleCount; i++) {
+                const p = new THREE.Mesh(geo, mat.clone());
+                p.position.copy(position);
+                const velocity = new THREE.Vector3((Math.random()-0.5)*0.8, (Math.random()-0.5)*0.8, (Math.random()-0.5)*0.8);
+                scene.add(p);
+                particles.push({ mesh: p, velocity: velocity, life: 1.0 });
+            }
+        }
+
         function fireLaser(source, color, isPlayer) {
             if (isPlayer) {
                 const wingTips = [];
@@ -282,7 +293,6 @@
             const staminaFill = document.getElementById('stamina-fill');
             const staminaParent = document.getElementById('stamina-parent');
 
-            // --- STAMINA & BOOST LOGIC ---
             const isBoosting = input.w && !isStaminaDepleted && stamina > 0;
             
             if (isBoosting) {
@@ -303,11 +313,9 @@
             }
             staminaFill.style.width = `${stamina}%`;
 
-            // --- SMOOTH WING & ENGINE ANIMATION ---
             wingObjects.forEach((wing, i) => {
                 const restAngle = (i === 0 || i === 3) ? 0.25 : -0.25;
                 const targetAngle = isBoosting ? 0 : restAngle;
-                // Mechanical smooth transition
                 wing.rotation.z = THREE.MathUtils.lerp(wing.rotation.z, targetAngle, 0.05);
             });
 
@@ -319,14 +327,12 @@
                 eng.mesh.scale.setScalar(THREE.MathUtils.lerp(eng.mesh.scale.x, 0.5 + speed * 0.5, 0.1));
             });
 
-            // Speed & Camera
             let targetSpeed = isBoosting ? 2.5 : (input.s ? 0.2 : 0.8);
             speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.05);
             camera.position.z = THREE.MathUtils.lerp(camera.position.z, 8 + (speed - 0.8) * 2.5, 0.05);
             camera.fov = THREE.MathUtils.lerp(camera.fov, 75 + (speed * 4), 0.05);
             camera.updateProjectionMatrix();
 
-            // Reticle & Steering
             const targetX = (window.innerWidth / 2) + (mouse.x * 30);
             const targetY = (window.innerHeight / 2) + (mouse.y * -30);
             reticlePos.x = THREE.MathUtils.lerp(reticlePos.x, targetX, 0.1);
@@ -340,7 +346,6 @@
             }
             player.translateZ(-speed);
 
-            // Boundary
             const distFromCenter = player.position.length();
             if (distFromCenter > BOUNDARY_RADIUS && !player.userData.isTurning) {
                 player.userData.isTurning = true; document.getElementById('warning').style.display = 'block';
@@ -354,7 +359,6 @@
                 }
             }
 
-            // Enemies & Bullets
             enemies.forEach(en => {
                 const steer = new THREE.Vector3().subVectors(player.position, en.mesh.position).normalize();
                 en.mesh.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), steer), ENEMY_TURN_SPEED);
@@ -367,6 +371,7 @@
                 if(b.isPlayer) {
                     enemies.forEach((en, eIdx) => {
                         if(b.mesh.position.distanceTo(en.mesh.position) < 4) {
+                            createExplosion(en.mesh.position, 0xffff00);
                             scene.remove(en.mesh); enemies.splice(eIdx, 1); b.life = 0;
                         }
                     });
@@ -378,7 +383,19 @@
                 if(b.life <= 0) { scene.remove(b.mesh); bullets.splice(i, 1); }
             }
 
-            // Game State Updates
+            // --- Update Particles ---
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.mesh.position.add(p.velocity);
+                p.life -= 0.02;
+                p.mesh.scale.setScalar(p.life);
+                p.mesh.material.opacity = p.life;
+                if (p.life <= 0) {
+                    scene.remove(p.mesh);
+                    particles.splice(i, 1);
+                }
+            }
+
             if(shields <= 0 && gameActive) { gameActive = false; document.getElementById('lose-screen').classList.remove('hidden'); }
             if(enemies.length === 0 && gameActive) { gameActive = false; document.getElementById('win-screen').classList.remove('hidden'); }
 
