@@ -26,6 +26,26 @@
         .show-cursor {
             cursor: auto !important;
         }
+        .stat { font-size: 1.2rem; margin: 5px 0; font-family: monospace; }
+
+        /* --- STAMINA BAR CSS --- */
+        .stamina-container {
+            width: 150px;
+            height: 10px;
+            background: rgba(0, 255, 0, 0.2);
+            border: 1px solid #00ff00;
+            margin-top: 5px;
+            position: relative;
+        }
+        #stamina-fill {
+            height: 100%;
+            width: 100%;
+            background: #00ff00;
+            transition: background 0.3s;
+        }
+        .stamina-depleted #stamina-fill {
+            background: #ff0000; /* Red when overheated */
+        }
 
         
         #warning {
@@ -96,6 +116,10 @@
         <div class="stat">SPD: <span id="speed-val">0</span></div>
         <div class="stat">SHD: <span id="shield-val">100</span>%</div>
         <div class="stat">TGT: <span id="enemy-val">0</span></div>
+        <div class="stat">BST:</div>
+        <div class="stamina-container" id="stamina-parent">
+            <div id="stamina-fill"></div>
+        </div>
     </div>
     <div id="warning">RETURNING TO BATTLE ZONE</div>
     <div id="reticle"></div>
@@ -137,12 +161,24 @@
         const ENEMY_TURN_SPEED = 0.02; 
         const ENEMY_SEPARATION_DIST = 30;
 
+        // --- Stamina Config ---
+        const MAX_STAMINA = 100;
+        const STAMINA_DRAIN = 20; // Drains in 5 seconds (100 / 20 = 5)
+        const STAMINA_RECHARGE = 15; 
+        const RECHARGE_DELAY = 2000; // 2 seconds
+
         let isPaused = false;
         let gameActive = true;
 
         let scene, camera, renderer, player, clock, boundary;
         let speed = 0.8;
         let shields = 100;
+
+        // Stamina
+        let stamina = MAX_STAMINA;
+        let isStaminaDepleted = false; // "Overheat" flag
+        let lastBoostTime = 0;         // Timestamp of the last time 'W' was held
+
         let input = { w: false, s: false, a: false, d: false };
         let mouse = { x: 0, y: 0 };
         let bullets = [];
@@ -352,6 +388,43 @@
             if(isPaused || !gameActive) return;
 
             const dt = clock.getDelta();
+            const now = Date.now();
+
+            // --- 1. STAMINA LOGIC ---
+            const staminaFill = document.getElementById('stamina-fill');
+            const staminaParent = document.getElementById('stamina-parent');
+
+            if (input.w && !isStaminaDepleted && stamina > 0) {
+                // Currently Boosting
+                stamina -= STAMINA_DRAIN * dt;
+                lastBoostTime = now;
+                if (stamina <= 0) {
+                    stamina = 0;
+                    isStaminaDepleted = true;
+                    staminaParent.classList.add('stamina-depleted');
+                }
+            } else {
+                // Not Boosting - handle recharge
+                const cooldownOver = now - lastBoostTime > RECHARGE_DELAY;
+                if (cooldownOver) {
+                    stamina += STAMINA_RECHARGE * dt;
+                    if (stamina >= MAX_STAMINA) {
+                        stamina = MAX_STAMINA;
+                        isStaminaDepleted = false;
+                        staminaParent.classList.remove('stamina-depleted');
+                    }
+                }
+            }
+            staminaFill.style.width = `${stamina}%`;
+
+            // --- 2. MOVEMENT (STAMINA AWARE) ---
+            let targetSpeed = 0.8;
+            if (input.w && !isStaminaDepleted) {
+                targetSpeed = 2.5;
+            } else if (input.s) {
+                targetSpeed = 0.2;
+            }
+            speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.05);
 
             // --- 1. DYNAMIC RETICLE LOGIC ---
             const reticleEl = document.getElementById('reticle');
@@ -375,11 +448,11 @@
             reticleEl.style.top = `${reticlePos.y - 20}px`;
 
 
-            // Movement & Engine
-            let targetSpeed = 0.8;
-            if(input.w) targetSpeed = 2.5;
-            if(input.s) targetSpeed = 0.2;
-            speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.05);
+            // // Movement & Engine
+            // let targetSpeed = 0.8;
+            // if(input.w) targetSpeed = 2.5;
+            // if(input.s) targetSpeed = 0.2;
+            // speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.05);
 
             camera.position.z = THREE.MathUtils.lerp(camera.position.z, 8 + (speed - 0.8) * 2.5, 0.05);
             camera.fov = THREE.MathUtils.lerp(camera.fov, 75 + (speed * 4), 0.05);
