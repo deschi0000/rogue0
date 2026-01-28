@@ -5,95 +5,43 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Star-Ace: Rogue Squadron Edition</title>
     <style>
-        
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         #hud {
             position: absolute; top: 20px; left: 20px; color: #00ff00;
             pointer-events: none; text-shadow: 2px 2px #000; z-index: 10;
         }
-        
-        /* Hide cursor by default during gameplay */
-        canvas {
-            cursor: none;
-        }
-        /* Show cursor when an overlay (Pause, Win, Lose) is active */
-        .overlay:not(.hidden) ~ canvas, 
-        body:has(.overlay:not(.hidden)) {
-            cursor: auto;
-        }
-
-        /* Fallback: If your browser doesn't support :has, we'll use a class */
-        .show-cursor {
-            cursor: auto !important;
-        }
+        canvas { cursor: none; }
         .stat { font-size: 1.2rem; margin: 5px 0; font-family: monospace; }
 
-        /* --- STAMINA BAR CSS --- */
         .stamina-container {
-            width: 150px;
-            height: 10px;
-            background: rgba(0, 255, 0, 0.2);
-            border: 1px solid #00ff00;
-            margin-top: 5px;
-            position: relative;
+            width: 150px; height: 10px; background: rgba(0, 255, 0, 0.2);
+            border: 1px solid #00ff00; margin-top: 5px; position: relative;
         }
         #stamina-fill {
-            height: 100%;
-            width: 100%;
-            background: #00ff00;
+            height: 100%; width: 100%; background: #00ff00;
             transition: background 0.3s;
         }
-        .stamina-depleted #stamina-fill {
-            background: #ff0000; /* Red when overheated */
-        }
+        /* Overheat UI state */
+        .stamina-depleted #stamina-fill { background: #ff0000; }
 
-        
         #warning {
             position: absolute; top: 20%; left: 50%; transform: translateX(-50%);
             color: #ff0000; font-weight: bold; font-size: 2rem; display: none;
             text-shadow: 0 0 10px #ff0000; z-index: 15;
         }
-        /* UPDATED RETICLE CSS: Position is now handled by JS */
         #reticle {
-            position: absolute; 
-            width: 40px; height: 40px; border: 1px solid rgba(0, 255, 0, 0.5);
-            border-radius: 50%; 
-            pointer-events: none;
-            z-index: 20;
+            position: absolute; width: 40px; height: 40px; border: 1px solid rgba(0, 255, 0, 0.5);
+            border-radius: 50%; pointer-events: none; z-index: 20;
         }
-        #reticle::before, #reticle::after {
-            content: ''; position: absolute; background: none;
-        }
-        /* #reticle::before { top: 50%; left: -5px; width: 10px; height: 1px; } */
-        /* #reticle::after { top: -5px; left: 50%; width: 1px; height: 10px; } */
-        
-        /* Vertical line (Top to Bottom) */
-        /* Vertical notches (Top and Bottom) */
         #reticle::before { 
-            top: -8px; 
-            left: 50%; 
-            width: 1px; 
-            height: calc(100% + 16px); 
-            background: linear-gradient(to bottom, 
-                #00ff00 15%, 
-                transparent 15%, 
-                transparent 85%, 
-                #00ff00 85%
-            );
+            top: -8px; left: 50%; width: 1px; height: calc(100% + 16px); 
+            background: linear-gradient(to bottom, #00ff00 15%, transparent 15%, transparent 85%, #00ff00 85%);
+            content: ''; position: absolute;
         }
-
-        /* Horizontal notches (Left and Right) */
         #reticle::after { 
-            top: 50%; 
-            left: -8px; 
-            width: calc(100% + 16px); 
-            height: 1px; 
-            background: linear-gradient(to right, 
-                #00ff00 15%, 
-                transparent 15%, 
-                transparent 85%, 
-                #00ff00 85%
-            );
+            top: 50%; left: -8px; width: calc(100% + 16px); height: 1px; 
+            background: linear-gradient(to right, #00ff00 15%, transparent 15%, transparent 85%, #00ff00 85%);
+            content: ''; position: absolute;
         }
         .overlay {
             position: fixed; inset: 0; background: rgba(0,0,0,0.8);
@@ -101,13 +49,7 @@
             justify-content: center; color: white; z-index: 100; text-align: center;
         }
         .hidden { display: none !important; }
-        button {
-            padding: 15px 30px; font-size: 1.2rem; background: #00ff00;
-            border: none; cursor: pointer; color: black; font-weight: bold; margin-top: 20px;
-        }
-        button:hover { background: #00cc00; }
-        h1 { font-size: 3rem; color: #00ff00; margin: 0; }
-        .stat { font-size: 1.2rem; margin: 5px 0; font-family: monospace; }
+        button { padding: 15px 30px; font-size: 1.2rem; background: #00ff00; border: none; cursor: pointer; color: black; font-weight: bold; margin-top: 20px; }
     </style>
 </head>
 <body>
@@ -128,19 +70,16 @@
 
     <div id="pause-screen" class="overlay hidden">
         <h1>PAUSED</h1>
-        <p>Use [WASD] to fly | [SPACE] to fire</p>
         <button onclick="togglePause()">RESUME</button>
     </div>
 
     <div id="win-screen" class="overlay hidden">
         <h1>MISSION ACCOMPLISHED</h1>
-        <p>The sector is clear.</p>
         <button onclick="location.reload()">REPLAY</button>
     </div>
 
     <div id="lose-screen" class="overlay hidden">
         <h1>SHIP DESTROYED</h1>
-        <p>You became one with the Force...</p>
         <button onclick="location.reload()">RETRY</button>
     </div>
 
@@ -161,34 +100,19 @@
         const ENEMY_TURN_SPEED = 0.02; 
         const ENEMY_SEPARATION_DIST = 30;
 
-        // --- Stamina Config ---
         const MAX_STAMINA = 100;
-        const STAMINA_DRAIN = 20; // Drains in 5 seconds (100 / 20 = 5)
+        const STAMINA_DRAIN = 20; 
         const STAMINA_RECHARGE = 15; 
-        const RECHARGE_DELAY = 2000; // 2 seconds
+        const RECHARGE_DELAY = 2000;
 
-        let isPaused = false;
-        let gameActive = true;
-
+        let isPaused = false, gameActive = true;
         let scene, camera, renderer, player, clock, boundary;
-        let speed = 0.8;
-        let shields = 100;
-
-        // Stamina
-        let stamina = MAX_STAMINA;
-        let isStaminaDepleted = false; // "Overheat" flag
-        let lastBoostTime = 0;         // Timestamp of the last time 'W' was held
-
+        let speed = 0.8, shields = 100, stamina = MAX_STAMINA, isStaminaDepleted = false, lastBoostTime = 0;
+        
         let input = { w: false, s: false, a: false, d: false };
         let mouse = { x: 0, y: 0 };
-        let bullets = [];
-        let enemies = [];
-        let obstacles = [];
-        let engines = []; 
-        let laserIndex = 0;
-
-        // RETICLE TRACKING VARIABLES
-        let reticlePos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        let bullets = [], enemies = [], obstacles = [], engines = [], wingObjects = []; 
+        let laserIndex = 0, reticlePos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
         init();
         animate();
@@ -208,30 +132,20 @@
             scene.add(sun);
 
             const boundaryGeo = new THREE.SphereGeometry(BOUNDARY_RADIUS, 32, 32);
-            const boundaryMat = new THREE.MeshBasicMaterial({ 
-                color: 0x00ffff, 
-                wireframe: true, 
-                transparent: true, 
-                opacity: 0.1 
-            });
-            boundary = new THREE.Mesh(boundaryGeo, boundaryMat);
+            boundary = new THREE.Mesh(boundaryGeo, new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.1 }));
             scene.add(boundary);
 
             player = new THREE.Group();
             player.userData = { isTurning: false }; 
             const mat = new THREE.MeshPhongMaterial({ color: 0xdddddd });
-            const cockpitMat = new THREE.MeshPhongMaterial({ color: 0x333333, transparent: true, opacity: 0.9 });
-            const engineGlowMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
-
+            
             const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.2, 5, 5), mat);
             body.rotation.x = Math.PI / 2;
             body.translateY(-1.8)
             player.add(body);
 
-            const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2), cockpitMat);
-            cockpit.position.set(0, 0.15, 0.1);
-            cockpit.translateZ(-0.5);
-            cockpit.scale.set(1, 1, 1.8);
+            const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshPhongMaterial({ color: 0x333333, transparent: true, opacity: 0.9 }));
+            cockpit.position.set(0, 0.15, 0.1); cockpit.translateZ(-0.5); cockpit.scale.set(1, 1, 1.8);
             player.add(cockpit);
 
             const createWing = (xSide, ySide, angle) => {
@@ -245,7 +159,7 @@
                 engineBody.rotation.x = Math.PI / 2;
                 engineGroup.add(engineBody);
 
-                const glow = new THREE.Mesh(new THREE.CircleGeometry(0.15, 8), engineGlowMat);
+                const glow = new THREE.Mesh(new THREE.CircleGeometry(0.15, 8), new THREE.MeshBasicMaterial({ color: 0x00ffff }));
                 glow.position.z = 0.41;
                 engineGroup.add(glow);
                 
@@ -258,8 +172,7 @@
                 wingGroup.add(engineGroup);
 
                 const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.5), mat);
-                cannon.rotation.x = Math.PI / 2;
-                cannon.position.set(xSide * 2, 0, -0.8);
+                cannon.rotation.x = Math.PI / 2; cannon.position.set(xSide * 2, 0, -0.8);
                 wingGroup.add(cannon);
 
                 wingGroup.rotation.z = angle;
@@ -267,46 +180,36 @@
                 return wingGroup;
             };
 
-            player.add(createWing(1, 1, 0.25));   
-            player.add(createWing(-1, 1, -0.25)); 
-            player.add(createWing(1, -1, -0.25)); 
-            player.add(createWing(-1, -1, 0.25)); 
+            // Initialize wings and store in wingObjects array
+            wingObjects = [
+                createWing(1, 1, 0.25),   
+                createWing(-1, 1, -0.25), 
+                createWing(1, -1, -0.25), 
+                createWing(-1, -1, 0.25)
+            ];
+            player.add(...wingObjects);
 
             scene.add(player);
             camera.position.set(0, 2, 8); 
             player.add(camera);
 
+            // Stars & Asteroids
             const starGeo = new THREE.BufferGeometry();
             const starCoords = [];
             for(let i=0; i<4000; i++) {
-                const theta = Math.random() * Math.PI * 2;
-                const phi = Math.acos((Math.random() * 2) - 1);
-                const dist = 2000 + Math.random() * 1000; 
+                const theta = Math.random() * Math.PI * 2, phi = Math.acos((Math.random() * 2) - 1), dist = 2000 + Math.random() * 1000; 
                 starCoords.push(dist * Math.sin(phi) * Math.cos(theta), dist * Math.sin(phi) * Math.sin(theta), dist * Math.cos(phi));
             }
             starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starCoords, 3));
             scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({color: 0xffffff, size: 1.5})));
 
             for(let i=0; i<ASTEROID_COUNT; i++) {
-                const detail = Math.floor(Math.random() * 2);
-                const baseSize = Math.random() * 12 + 3;
-                const astGeo = new THREE.IcosahedronGeometry(baseSize, detail);
-                const astMat = new THREE.MeshPhongMaterial({
-                    color: 0x444444 + (Math.random() * 0x222222),
-                    flatShading: true
-                });
-                const ast = new THREE.Mesh(astGeo, astMat);
-                const scale = Math.random() * 2.5 + 0.5;
-                ast.scale.set(scale, scale, scale);
-                const theta = Math.random() * Math.PI * 2;
-                const phi = Math.acos((Math.random() * 2) - 1);
-                const rawDist = Math.random(); 
-                const dist = Math.pow(rawDist, 1/3) * (BOUNDARY_RADIUS - 150);
-                const finalDist = Math.max(SAFE_ZONE_RADIUS + 50, dist);
-                ast.position.set(finalDist * Math.sin(phi) * Math.cos(theta), finalDist * Math.sin(phi) * Math.sin(theta), finalDist * Math.cos(phi));
-                ast.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
-                scene.add(ast);
-                obstacles.push(ast);
+                const ast = new THREE.Mesh(new THREE.IcosahedronGeometry(Math.random() * 12 + 3, Math.floor(Math.random() * 2)), new THREE.MeshPhongMaterial({ color: 0x444444 + (Math.random() * 0x222222), flatShading: true }));
+                const scale = Math.random() * 2.5 + 0.5; ast.scale.set(scale, scale, scale);
+                const theta = Math.random() * Math.PI * 2, phi = Math.acos((Math.random() * 2) - 1), rawDist = Math.random(); 
+                const dist = Math.max(SAFE_ZONE_RADIUS + 50, Math.pow(rawDist, 1/3) * (BOUNDARY_RADIUS - 150));
+                ast.position.set(dist * Math.sin(phi) * Math.cos(theta), dist * Math.sin(phi) * Math.sin(theta), dist * Math.cos(phi));
+                scene.add(ast); obstacles.push(ast);
             }
 
             spawnEnemies(10);
@@ -338,48 +241,36 @@
         }
 
         function spawnEnemies(count) {
-            const geom = new THREE.SphereGeometry(1, 6, 6);
-            const wing = new THREE.BoxGeometry(0.1, 4, 3);
+            const geom = new THREE.SphereGeometry(1, 6, 6), wing = new THREE.BoxGeometry(0.1, 4, 3);
             for(let i=0; i<count; i++) {
                 const en = new THREE.Group();
                 const core = new THREE.Mesh(geom, new THREE.MeshPhongMaterial({color: 0x333333}));
-                const w1 = new THREE.Mesh(wing, new THREE.MeshPhongMaterial({color: 0x111111}));
-                w1.position.x = 1.5;
+                const w1 = new THREE.Mesh(wing, new THREE.MeshPhongMaterial({color: 0x111111})); w1.position.x = 1.5;
                 const w2 = w1.clone(); w2.position.x = -1.5;
                 en.add(core, w1, w2);
                 const dist = Math.random() * (BOUNDARY_RADIUS - 200);
                 en.position.set(THREE.MathUtils.randFloatSpread(dist), THREE.MathUtils.randFloatSpread(dist), THREE.MathUtils.randFloatSpread(dist));
-                scene.add(en);
-                enemies.push({mesh: en, health: 1});
+                scene.add(en); enemies.push({mesh: en, health: 1});
             }
         }
 
         function fireLaser(source, color, isPlayer) {
             if (isPlayer) {
                 const wingTips = [];
-                source.traverse((child) => {
-                    if (child.isMesh && child.geometry.type === 'CylinderGeometry' && Math.abs(child.position.x) > 1.5) {
-                        wingTips.push(child);
-                    }
-                });
+                source.traverse((child) => { if (child.isMesh && child.geometry.type === 'CylinderGeometry' && Math.abs(child.position.x) > 1.5) wingTips.push(child); });
                 if (wingTips.length > 0) {
                     wingTips.sort((a, b) => a.position.x - b.position.x);
                     const activeTip = wingTips[laserIndex % wingTips.length];
                     const laser = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 4), new THREE.MeshBasicMaterial({ color: color }));
-                    const tipPos = new THREE.Vector3();
-                    activeTip.getWorldPosition(tipPos);
-                    laser.position.copy(tipPos);
-                    laser.quaternion.copy(source.quaternion);
-                    scene.add(laser);
-                    bullets.push({ mesh: laser, life: 120, isPlayer: true });
+                    const tipPos = new THREE.Vector3(); activeTip.getWorldPosition(tipPos);
+                    laser.position.copy(tipPos); laser.quaternion.copy(source.quaternion);
+                    scene.add(laser); bullets.push({ mesh: laser, life: 120, isPlayer: true });
                     laserIndex++;
                 }
             } else {
                 const laser = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 2), new THREE.MeshBasicMaterial({color: color}));
-                laser.position.copy(source.position);
-                laser.quaternion.copy(source.quaternion);
-                scene.add(laser);
-                bullets.push({mesh: laser, life: 120, isPlayer: false});
+                laser.position.copy(source.position); laser.quaternion.copy(source.quaternion);
+                scene.add(laser); bullets.push({mesh: laser, life: 120, isPlayer: false});
             }
         }
 
@@ -387,199 +278,109 @@
             requestAnimationFrame(animate);
             if(isPaused || !gameActive) return;
 
-            const dt = clock.getDelta();
-            const now = Date.now();
-
-            // --- 1. STAMINA LOGIC ---
+            const dt = clock.getDelta(), now = Date.now();
             const staminaFill = document.getElementById('stamina-fill');
             const staminaParent = document.getElementById('stamina-parent');
 
-            if (input.w && !isStaminaDepleted && stamina > 0) {
-                // Currently Boosting
+            // --- STAMINA & BOOST LOGIC ---
+            const isBoosting = input.w && !isStaminaDepleted && stamina > 0;
+            
+            if (isBoosting) {
                 stamina -= STAMINA_DRAIN * dt;
                 lastBoostTime = now;
                 if (stamina <= 0) {
-                    stamina = 0;
-                    isStaminaDepleted = true;
+                    stamina = 0; isStaminaDepleted = true;
                     staminaParent.classList.add('stamina-depleted');
                 }
             } else {
-                // Not Boosting - handle recharge
-                const cooldownOver = now - lastBoostTime > RECHARGE_DELAY;
-                if (cooldownOver) {
+                if (now - lastBoostTime > RECHARGE_DELAY) {
                     stamina += STAMINA_RECHARGE * dt;
                     if (stamina >= MAX_STAMINA) {
-                        stamina = MAX_STAMINA;
-                        isStaminaDepleted = false;
+                        stamina = MAX_STAMINA; isStaminaDepleted = false;
                         staminaParent.classList.remove('stamina-depleted');
                     }
                 }
             }
             staminaFill.style.width = `${stamina}%`;
 
-            // --- 2. MOVEMENT (STAMINA AWARE) ---
-            let targetSpeed = 0.8;
-            if (input.w && !isStaminaDepleted) {
-                targetSpeed = 2.5;
-            } else if (input.s) {
-                targetSpeed = 0.2;
-            }
-            speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.05);
-
-            // --- 1. DYNAMIC RETICLE LOGIC ---
-            const reticleEl = document.getElementById('reticle');
-            const intensity = 30; // How many pixels it moves
-            const centerX = window.innerWidth / 2;
-            const centerY = window.innerHeight / 2;
-            
-            // The reticle should move WITH the mouse to show where the ship is aiming.
-            // Since your ship steering uses -mouse.x and +mouse.y, we match that here.
-            // Horizontal (X): mouse.x is -1 (left) to 1 (right)
-            // Vertical (Y): we use -mouse.y because screen Y is 0 at the TOP
-            const targetX = centerX + (mouse.x * intensity);
-            const targetY = centerY + (mouse.y * -intensity); // Flipped this sign!
-
-            // Interpolate for smooth "floaty" feel
-            reticlePos.x = THREE.MathUtils.lerp(reticlePos.x, targetX, 0.1);
-            reticlePos.y = THREE.MathUtils.lerp(reticlePos.y, targetY, 0.1);
-
-            // Update UI (centered on the calculated point)
-            reticleEl.style.left = `${reticlePos.x - 20}px`;
-            reticleEl.style.top = `${reticlePos.y - 20}px`;
-
-
-            // // Movement & Engine
-            // let targetSpeed = 0.8;
-            // if(input.w) targetSpeed = 2.5;
-            // if(input.s) targetSpeed = 0.2;
-            // speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.05);
-
-            camera.position.z = THREE.MathUtils.lerp(camera.position.z, 8 + (speed - 0.8) * 2.5, 0.05);
-            camera.fov = THREE.MathUtils.lerp(camera.fov, 75 + (speed * 4), 0.05);
-            camera.updateProjectionMatrix();
+            // --- SMOOTH WING & ENGINE ANIMATION ---
+            wingObjects.forEach((wing, i) => {
+                const restAngle = (i === 0 || i === 3) ? 0.25 : -0.25;
+                const targetAngle = isBoosting ? 0 : restAngle;
+                // Mechanical smooth transition
+                wing.rotation.z = THREE.MathUtils.lerp(wing.rotation.z, targetAngle, 0.05);
+            });
 
             engines.forEach(eng => {
+                const engineColor = isStaminaDepleted ? 0xff0000 : 0x00ffff;
+                eng.mesh.material.color.setHex(engineColor);
+                eng.light.color.setHex(engineColor);
                 eng.light.intensity = THREE.MathUtils.lerp(eng.light.intensity, speed * 2, 0.1);
                 eng.mesh.scale.setScalar(THREE.MathUtils.lerp(eng.mesh.scale.x, 0.5 + speed * 0.5, 0.1));
             });
 
-            // Steering Logic
+            // Speed & Camera
+            let targetSpeed = isBoosting ? 2.5 : (input.s ? 0.2 : 0.8);
+            speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.05);
+            camera.position.z = THREE.MathUtils.lerp(camera.position.z, 8 + (speed - 0.8) * 2.5, 0.05);
+            camera.fov = THREE.MathUtils.lerp(camera.fov, 75 + (speed * 4), 0.05);
+            camera.updateProjectionMatrix();
+
+            // Reticle & Steering
+            const targetX = (window.innerWidth / 2) + (mouse.x * 30);
+            const targetY = (window.innerHeight / 2) + (mouse.y * -30);
+            reticlePos.x = THREE.MathUtils.lerp(reticlePos.x, targetX, 0.1);
+            reticlePos.y = THREE.MathUtils.lerp(reticlePos.y, targetY, 0.1);
+            const reticleEl = document.getElementById('reticle');
+            reticleEl.style.left = `${reticlePos.x - 20}px`; reticleEl.style.top = `${reticlePos.y - 20}px`;
+
             if (!player.userData.isTurning) {
-                player.rotateX(mouse.y * 0.04); 
-                player.rotateY(-mouse.x * 0.04);
-                if(input.a) player.rotateZ(0.05);
-                if(input.d) player.rotateZ(-0.05);
+                player.rotateX(mouse.y * 0.04); player.rotateY(-mouse.x * 0.04);
+                if(input.a) player.rotateZ(0.05); if(input.d) player.rotateZ(-0.05);
             }
             player.translateZ(-speed);
 
-            // Boundary Logic
+            // Boundary
             const distFromCenter = player.position.length();
-            const warningEl = document.getElementById('warning');
-
             if (distFromCenter > BOUNDARY_RADIUS && !player.userData.isTurning) {
-                player.userData.isTurning = true;
-                warningEl.style.display = 'block';
+                player.userData.isTurning = true; document.getElementById('warning').style.display = 'block';
             }
-
             if (player.userData.isTurning) {
                 const dirToCenter = new THREE.Vector3(0,0,0).sub(player.position).normalize();
-                const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), dirToCenter);
-                player.quaternion.slerp(targetQuat, 0.03);
+                player.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), dirToCenter), 0.03);
                 player.rotateZ(0.02);
-                boundary.material.color.setHex(0xff0000);
-                boundary.material.opacity = 0.4;
                 if (distFromCenter < BOUNDARY_RADIUS - 100) {
-                    player.userData.isTurning = false;
-                    warningEl.style.display = 'none';
-                    boundary.material.color.setHex(0x00ffff);
-                    boundary.material.opacity = 0.1;
+                    player.userData.isTurning = false; document.getElementById('warning').style.display = 'none';
                 }
             }
 
-            // Enemy AI
+            // Enemies & Bullets
             enemies.forEach(en => {
-                const steerDir = new THREE.Vector3();
-                const desired = new THREE.Vector3().subVectors(player.position, en.mesh.position).normalize();
-                steerDir.add(desired.multiplyScalar(0.5));
-                const separation = new THREE.Vector3(0,0,0);
-                let neighbors = 0;
-                enemies.forEach(other => {
-                    if (other !== en) {
-                        const dist = en.mesh.position.distanceTo(other.mesh.position);
-                        if (dist < ENEMY_SEPARATION_DIST) {
-                            const diff = new THREE.Vector3().subVectors(en.mesh.position, other.mesh.position).normalize();
-                            separation.add(diff.divideScalar(dist));
-                            neighbors++;
-                        }
-                    }
-                });
-                if (neighbors > 0) steerDir.add(separation.multiplyScalar(2.0));
-                const forward = new THREE.Vector3(0,0,-1).applyQuaternion(en.mesh.quaternion);
-                const ray = new THREE.Raycaster(en.mesh.position, forward);
-                const hits = ray.intersectObjects(obstacles, false);
-                if(hits.length > 0 && hits[0].distance < 80) {
-                    const avoidance = new THREE.Vector3().subVectors(en.mesh.position, hits[0].object.position).normalize();
-                    steerDir.add(avoidance.multiplyScalar(4.0));
-                }
-                if(en.mesh.position.length() > BOUNDARY_RADIUS - 200) {
-                    const toCenter = new THREE.Vector3().negate().copy(en.mesh.position).normalize();
-                    steerDir.add(toCenter.multiplyScalar(5.0));
-                }
-                const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), steerDir.normalize());
-                en.mesh.quaternion.slerp(targetQuat, ENEMY_TURN_SPEED);
-                const localSteer = steerDir.clone().applyQuaternion(en.mesh.quaternion.clone().invert());
-                en.mesh.rotation.z = THREE.MathUtils.lerp(en.mesh.rotation.z, localSteer.x * 0.5, 0.05);
+                const steer = new THREE.Vector3().subVectors(player.position, en.mesh.position).normalize();
+                en.mesh.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), steer), ENEMY_TURN_SPEED);
                 en.mesh.translateZ(-ENEMY_MAX_SPEED);
-                if(Math.random() < ENEMY_FIRE_RATE) fireLaser(en.mesh, 0x00ff00, false)
+                if(Math.random() < ENEMY_FIRE_RATE) fireLaser(en.mesh, 0x00ff00, false);
             });
 
-            // Bullets
             for(let i = bullets.length - 1; i >= 0; i--) {
-                const b = bullets[i];
-                b.mesh.translateZ(-BULLET_SPEED); 
-                b.life--;
+                const b = bullets[i]; b.mesh.translateZ(-BULLET_SPEED); b.life--;
                 if(b.isPlayer) {
                     enemies.forEach((en, eIdx) => {
                         if(b.mesh.position.distanceTo(en.mesh.position) < 4) {
-                            scene.remove(en.mesh);
-                            enemies.splice(eIdx, 1);
-                            b.life = 0;
+                            scene.remove(en.mesh); enemies.splice(eIdx, 1); b.life = 0;
                         }
                     });
-                } else {
-                    if(b.mesh.position.distanceTo(player.position) < 4) {
-                        shields -= 10;
-                        b.life = 0;
-                        const flash = document.getElementById('damage-flash');
-                        flash.style.opacity = "1"; 
-                        setTimeout(() => { flash.style.opacity = "0"; }, 100);
-                    }
+                } else if(b.mesh.position.distanceTo(player.position) < 4) {
+                    shields -= 10; b.life = 0;
+                    document.getElementById('damage-flash').style.opacity = "1"; 
+                    setTimeout(() => { document.getElementById('damage-flash').style.opacity = "0"; }, 100);
                 }
-                if(b.life <= 0) {
-                    scene.remove(b.mesh);
-                    bullets.splice(i, 1);
-                }
+                if(b.life <= 0) { scene.remove(b.mesh); bullets.splice(i, 1); }
             }
 
-            // Collisions
-            obstacles.forEach(obs => {
-                const hitRadius = (obs.geometry.parameters.radius * obs.scale.x) + 1.5;
-                if(player.position.distanceTo(obs.position) < hitRadius) {
-                    if (gameActive) {
-                        shields = 0;
-                        player.scale.set(0, 0, 0); 
-                    }
-                }
-            });
-
-            if(shields <= 0 && gameActive) {
-                gameActive = false;
-                document.getElementById('lose-screen').classList.remove('hidden');
-            }
-            if(enemies.length === 0 && gameActive) {
-                gameActive = false;
-                document.getElementById('win-screen').classList.remove('hidden');
-            }
+            // Game State Updates
+            if(shields <= 0 && gameActive) { gameActive = false; document.getElementById('lose-screen').classList.remove('hidden'); }
+            if(enemies.length === 0 && gameActive) { gameActive = false; document.getElementById('win-screen').classList.remove('hidden'); }
 
             document.getElementById('speed-val').innerText = Math.round(speed * 100);
             document.getElementById('shield-val').innerText = Math.max(0, Math.round(shields));
