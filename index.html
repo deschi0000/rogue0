@@ -224,6 +224,29 @@
                 if(e.code === 'Space' && !isPaused && !player.userData.isTurning && gameActive) fireLaser(player, 0xff0000, true);
                 if(e.code === 'KeyF' && !isPaused && !player.userData.isTurning && gameActive) fireTorpedo();
             });
+
+
+            // // Fire laser on Left Mouse Click -- Keep in case getting rid of proton torpedo right click
+            // window.addEventListener('mousedown', e => {
+            //     if (e.button === 0 && !isPaused && !player.userData.isTurning && gameActive) {
+            //         fireLaser(player, 0xff0000, true);
+            //     }
+            // });
+
+            // Mouse button firing
+            window.addEventListener('mousedown', e => {
+                if (!isPaused && !player.userData.isTurning && gameActive) {
+                    if (e.button === 0) { // Left Click
+                        fireLaser(player, 0xff0000, true);
+                    } else if (e.button === 2) { // Right Click
+                        fireTorpedo();
+                    }
+                }
+            });
+
+            // Prevent the context menu from popping up when right-clicking to fire
+            window.addEventListener('contextmenu', e => e.preventDefault());
+
             window.addEventListener('keyup', e => {
                 if(e.code === 'KeyW') input.w = false;
                 if(e.code === 'KeyS') input.s = false;
