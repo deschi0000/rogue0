@@ -323,9 +323,8 @@
             // --- Game State Handling ---
             if(shields <= 0 && gameActive) { 
                 gameActive = false; 
-                createExplosion(player.position, 0xff4400, 6.0); // Massive boom
+                createExplosion(player.position, 0xff4400, 6.0);
                 
-                // Detach camera so it stays in place to watch the explosion
                 const worldPos = new THREE.Vector3();
                 camera.getWorldPosition(worldPos);
                 scene.attach(camera); 
@@ -336,14 +335,13 @@
             if(enemies.length === 0 && gameActive) { gameActive = false; document.getElementById('win-screen').classList.remove('hidden'); }
 
             if (!gameActive) {
-                // Keep particles moving even after death
                 handleParticles();
                 renderer.render(scene, camera);
                 return;
             }
 
+            // --- Stamina & UI Logic ---
             const isBoosting = input.w && !isStaminaDepleted && stamina > 0;
-            
             if (isBoosting) {
                 stamina -= STAMINA_DRAIN * dt;
                 lastBoostTime = now;
@@ -362,6 +360,7 @@
             }
             staminaFill.style.width = `${stamina}%`;
 
+            // --- Movement & Camera ---
             wingObjects.forEach((wing, i) => {
                 const restAngle = (i === 0 || i === 3) ? 0.25 : -0.25;
                 const targetAngle = isBoosting ? 0 : restAngle;
@@ -395,6 +394,7 @@
             }
             player.translateZ(-speed);
 
+            // --- Boundaries ---
             const distFromCenter = player.position.length();
             if (distFromCenter > BOUNDARY_RADIUS && !player.userData.isTurning) {
                 player.userData.isTurning = true; document.getElementById('warning').style.display = 'block';
@@ -408,6 +408,17 @@
                 }
             }
 
+            // --- SHIP COLLISIONS ---
+            obstacles.forEach(obs => {
+                const hitRadius = (obs.geometry.parameters.radius * obs.scale.x) + 1.5;
+                if(player.position.distanceTo(obs.position) < hitRadius) {
+                    if (gameActive) {
+                        shields = 0; // Trigger the normal death hierarchy
+                    }
+                }
+            });
+
+            // --- AI Enemies ---
             enemies.forEach(en => {
                 const steer = new THREE.Vector3().subVectors(player.position, en.mesh.position).normalize();
                 en.mesh.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), steer), ENEMY_TURN_SPEED);
@@ -415,6 +426,7 @@
                 if(Math.random() < ENEMY_FIRE_RATE) fireLaser(en.mesh, 0x00ff00, false);
             });
 
+            // --- Laser Bullets ---
             for(let i = bullets.length - 1; i >= 0; i--) {
                 const b = bullets[i]; b.mesh.translateZ(-BULLET_SPEED); b.life--;
                 if(b.isPlayer) {
@@ -432,6 +444,7 @@
                 if(b.life <= 0) { scene.remove(b.mesh); bullets.splice(i, 1); }
             }
 
+            // --- Torpedoes ---
             for(let i = torpedoes.length - 1; i >= 0; i--) {
                 const t = torpedoes[i];
                 t.mesh.position.add(t.velocity);
@@ -439,7 +452,10 @@
                 createTorpedoTrail(t.mesh.position);
                 let impact = false;
                 enemies.forEach(en => { if(t.mesh.position.distanceTo(en.mesh.position) < 6) impact = true; });
+                
+                // Optional: Torpedoes hitting asteroids
                 obstacles.forEach(ast => { if(t.mesh.position.distanceTo(ast.position) < (ast.geometry.parameters.radius * ast.scale.x + 1)) impact = true; });
+
                 if(impact || t.dist > TORPEDO_RANGE) {
                     const blastPos = t.mesh.position.clone();
                     createExplosion(blastPos, 0x00ffff, 3.0); 
@@ -454,11 +470,9 @@
             }
 
             handleParticles();
-
             document.getElementById('speed-val').innerText = Math.round(speed * 100);
             document.getElementById('shield-val').innerText = Math.max(0, Math.round(shields));
             document.getElementById('enemy-val').innerText = enemies.length;
-
             renderer.render(scene, camera);
         }
 
