@@ -469,10 +469,61 @@
                 }
             });
 
-            // --- AI Enemies ---
+            // // --- AI Enemies ---
+            // enemies.forEach(en => {
+            //     const steer = new THREE.Vector3().subVectors(player.position, en.mesh.position).normalize();
+            //     en.mesh.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), steer), ENEMY_TURN_SPEED);
+            //     en.mesh.translateZ(-ENEMY_MAX_SPEED);
+            //     if(Math.random() < ENEMY_FIRE_RATE) fireLaser(en.mesh, 0x00ff00, false);
+            // });
+            // --- AI Enemies (Advanced Logic) ---
+            const ENEMY_SEPARATION_DIST = 15; // Distance to keep from other TIEs
+
             enemies.forEach(en => {
-                const steer = new THREE.Vector3().subVectors(player.position, en.mesh.position).normalize();
-                en.mesh.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), steer), ENEMY_TURN_SPEED);
+                const steerDir = new THREE.Vector3();
+                
+                // 1. SEEK PLAYER: Move toward the player
+                const desired = new THREE.Vector3().subVectors(player.position, en.mesh.position).normalize();
+                steerDir.add(desired.multiplyScalar(0.5));
+
+                // 2. SEPARATION: Don't bunch up
+                const separation = new THREE.Vector3(0,0,0);
+                let neighbors = 0;
+                enemies.forEach(other => {
+                    if (other !== en) {
+                        const dist = en.mesh.position.distanceTo(other.mesh.position);
+                        if (dist < ENEMY_SEPARATION_DIST) {
+                            const diff = new THREE.Vector3().subVectors(en.mesh.position, other.mesh.position).normalize();
+                            separation.add(diff.divideScalar(dist));
+                            neighbors++;
+                        }
+                    }
+                });
+                if (neighbors > 0) steerDir.add(separation.multiplyScalar(2.0));
+
+                // 3. OBSTACLE AVOIDANCE: Don't hit asteroids
+                const forward = new THREE.Vector3(0,0,-1).applyQuaternion(en.mesh.quaternion);
+                const ray = new THREE.Raycaster(en.mesh.position, forward);
+                const hits = ray.intersectObjects(obstacles, false);
+                if(hits.length > 0 && hits[0].distance < 80) {
+                    const avoidance = new THREE.Vector3().subVectors(en.mesh.position, hits[0].object.position).normalize();
+                    steerDir.add(avoidance.multiplyScalar(4.0));
+                }
+
+                // 4. BOUNDARY AWARENESS: Stay in the game zone
+                if(en.mesh.position.length() > BOUNDARY_RADIUS - 200) {
+                    const toCenter = new THREE.Vector3().copy(en.mesh.position).negate().normalize();
+                    steerDir.add(toCenter.multiplyScalar(5.0));
+                }
+
+                // Apply the calculated steering to rotation
+                const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), steerDir.normalize());
+                en.mesh.quaternion.slerp(targetQuat, ENEMY_TURN_SPEED);
+
+                // Add a subtle "banking" roll based on how hard they are turning
+                const localSteer = steerDir.clone().applyQuaternion(en.mesh.quaternion.clone().invert());
+                en.mesh.rotation.z = THREE.MathUtils.lerp(en.mesh.rotation.z, localSteer.x * 0.5, 0.05);
+
                 en.mesh.translateZ(-ENEMY_MAX_SPEED);
                 if(Math.random() < ENEMY_FIRE_RATE) fireLaser(en.mesh, 0x00ff00, false);
             });
