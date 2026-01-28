@@ -79,6 +79,7 @@
 
     <div id="lose-screen" class="overlay hidden">
         <h1>SHIP DESTROYED</h1>
+        <p>You became one with the Force</p>
         <button onclick="location.reload()">RETRY</button>
     </div>
 
@@ -91,9 +92,9 @@
 
         // --- Configuration ---
         const BULLET_SPEED = 6;
-        const TORPEDO_SPEED = 2.2; // Slightly slower for weight
+        const TORPEDO_SPEED = 2.2; 
         const TORPEDO_RANGE = 700;
-        const TORPEDO_BLAST_RADIUS = 25; // Radial damage distance
+        const TORPEDO_BLAST_RADIUS = 25; 
         const ENEMY_FIRE_RATE = 0.01; 
         const BOUNDARY_RADIUS = 1600;
         const ASTEROID_COUNT = 200;
@@ -220,8 +221,8 @@
                 if(e.code === 'KeyS') input.s = true;
                 if(e.code === 'KeyA') input.a = true;
                 if(e.code === 'KeyD') input.d = true;
-                if(e.code === 'Space' && !isPaused && !player.userData.isTurning) fireLaser(player, 0xff0000, true);
-                if(e.code === 'KeyF' && !isPaused && !player.userData.isTurning) fireTorpedo();
+                if(e.code === 'Space' && !isPaused && !player.userData.isTurning && gameActive) fireLaser(player, 0xff0000, true);
+                if(e.code === 'KeyF' && !isPaused && !player.userData.isTurning && gameActive) fireTorpedo();
             });
             window.addEventListener('keyup', e => {
                 if(e.code === 'KeyW') input.w = false;
@@ -261,7 +262,6 @@
             for (let i = 0; i < particleCount; i++) {
                 const p = new THREE.Mesh(geo, mat.clone());
                 p.position.copy(position);
-                // Faster, wider spread for torpedoes
                 const spread = 0.8 * scale;
                 const velocity = new THREE.Vector3((Math.random()-0.5)*spread, (Math.random()-0.5)*spread, (Math.random()-0.5)*spread);
                 scene.add(p);
@@ -309,17 +309,38 @@
             const p = new THREE.Mesh(pGeo, pMat);
             p.position.copy(pos);
             scene.add(p);
-            // Torpedo trail stays longer (0.8 vs original 0.5)
             particles.push({ mesh: p, velocity: new THREE.Vector3(0,0,0), life: 0.8 });
         }
 
         function animate() {
             requestAnimationFrame(animate);
-            if(isPaused || !gameActive) return;
+            if(isPaused) return;
 
             const dt = clock.getDelta(), now = Date.now();
             const staminaFill = document.getElementById('stamina-fill');
             const staminaParent = document.getElementById('stamina-parent');
+
+            // --- Game State Handling ---
+            if(shields <= 0 && gameActive) { 
+                gameActive = false; 
+                createExplosion(player.position, 0xff4400, 6.0); // Massive boom
+                
+                // Detach camera so it stays in place to watch the explosion
+                const worldPos = new THREE.Vector3();
+                camera.getWorldPosition(worldPos);
+                scene.attach(camera); 
+                
+                player.visible = false; 
+                setTimeout(() => { document.getElementById('lose-screen').classList.remove('hidden'); }, 1500); 
+            }
+            if(enemies.length === 0 && gameActive) { gameActive = false; document.getElementById('win-screen').classList.remove('hidden'); }
+
+            if (!gameActive) {
+                // Keep particles moving even after death
+                handleParticles();
+                renderer.render(scene, camera);
+                return;
+            }
 
             const isBoosting = input.w && !isStaminaDepleted && stamina > 0;
             
@@ -411,40 +432,41 @@
                 if(b.life <= 0) { scene.remove(b.mesh); bullets.splice(i, 1); }
             }
 
-            // --- Torpedo Animation & Radial Collision ---
             for(let i = torpedoes.length - 1; i >= 0; i--) {
                 const t = torpedoes[i];
                 t.mesh.position.add(t.velocity);
                 t.dist += TORPEDO_SPEED;
                 createTorpedoTrail(t.mesh.position);
-
                 let impact = false;
-                // Direct Hit Check
                 enemies.forEach(en => { if(t.mesh.position.distanceTo(en.mesh.position) < 6) impact = true; });
                 obstacles.forEach(ast => { if(t.mesh.position.distanceTo(ast.position) < (ast.geometry.parameters.radius * ast.scale.x + 1)) impact = true; });
-
                 if(impact || t.dist > TORPEDO_RANGE) {
                     const blastPos = t.mesh.position.clone();
-                    createExplosion(blastPos, 0x00ffff, 3.0); // Big 3x scale boom
-                    
-                    // Radial Damage: Check all enemies within blast radius
+                    createExplosion(blastPos, 0x00ffff, 3.0); 
                     for (let eIdx = enemies.length - 1; eIdx >= 0; eIdx--) {
                         if (blastPos.distanceTo(enemies[eIdx].mesh.position) < TORPEDO_BLAST_RADIUS) {
                             createExplosion(enemies[eIdx].mesh.position, 0xffff00, 1.0);
-                            scene.remove(enemies[eIdx].mesh);
-                            enemies.splice(eIdx, 1);
+                            scene.remove(enemies[eIdx].mesh); enemies.splice(eIdx, 1);
                         }
                     }
-                    
-                    scene.remove(t.mesh);
-                    torpedoes.splice(i, 1);
+                    scene.remove(t.mesh); torpedoes.splice(i, 1);
                 }
             }
 
+            handleParticles();
+
+            document.getElementById('speed-val').innerText = Math.round(speed * 100);
+            document.getElementById('shield-val').innerText = Math.max(0, Math.round(shields));
+            document.getElementById('enemy-val').innerText = enemies.length;
+
+            renderer.render(scene, camera);
+        }
+
+        function handleParticles() {
             for (let i = particles.length - 1; i >= 0; i--) {
                 const p = particles[i];
                 p.mesh.position.add(p.velocity);
-                p.life -= 0.015; // Slower fade for longer presence
+                p.life -= 0.015;
                 p.mesh.scale.setScalar(p.life);
                 p.mesh.material.opacity = Math.min(p.life, 1.0);
                 if (p.life <= 0) {
@@ -452,15 +474,6 @@
                     particles.splice(i, 1);
                 }
             }
-
-            if(shields <= 0 && gameActive) { gameActive = false; document.getElementById('lose-screen').classList.remove('hidden'); }
-            if(enemies.length === 0 && gameActive) { gameActive = false; document.getElementById('win-screen').classList.remove('hidden'); }
-
-            document.getElementById('speed-val').innerText = Math.round(speed * 100);
-            document.getElementById('shield-val').innerText = Math.max(0, Math.round(shields));
-            document.getElementById('enemy-val').innerText = enemies.length;
-
-            renderer.render(scene, camera);
         }
     </script>
 </body>
