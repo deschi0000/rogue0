@@ -21,7 +21,6 @@
             height: 100%; width: 100%; background: #00ff00;
             transition: background 0.3s;
         }
-        /* Overheat UI state */
         .stamina-depleted #stamina-fill { background: #ff0000; }
 
         #warning {
@@ -92,13 +91,15 @@
 
         // --- Configuration ---
         const BULLET_SPEED = 6;
+        const TORPEDO_SPEED = 2.2; // Slightly slower for weight
+        const TORPEDO_RANGE = 700;
+        const TORPEDO_BLAST_RADIUS = 25; // Radial damage distance
         const ENEMY_FIRE_RATE = 0.01; 
         const BOUNDARY_RADIUS = 1600;
         const ASTEROID_COUNT = 200;
         const SAFE_ZONE_RADIUS = 120; 
         const ENEMY_MAX_SPEED = 0.65;
         const ENEMY_TURN_SPEED = 0.02; 
-        const ENEMY_SEPARATION_DIST = 30;
 
         const MAX_STAMINA = 100;
         const STAMINA_DRAIN = 20; 
@@ -111,7 +112,7 @@
         
         let input = { w: false, s: false, a: false, d: false };
         let mouse = { x: 0, y: 0 };
-        let bullets = [], enemies = [], obstacles = [], engines = [], wingObjects = [], particles = []; 
+        let bullets = [], torpedoes = [], enemies = [], obstacles = [], engines = [], wingObjects = [], particles = []; 
         let laserIndex = 0, reticlePos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
         init();
@@ -220,6 +221,7 @@
                 if(e.code === 'KeyA') input.a = true;
                 if(e.code === 'KeyD') input.d = true;
                 if(e.code === 'Space' && !isPaused && !player.userData.isTurning) fireLaser(player, 0xff0000, true);
+                if(e.code === 'KeyF' && !isPaused && !player.userData.isTurning) fireTorpedo();
             });
             window.addEventListener('keyup', e => {
                 if(e.code === 'KeyW') input.w = false;
@@ -252,16 +254,18 @@
             }
         }
 
-        function createExplosion(position, color) {
-            const particleCount = 20;
-            const geo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+        function createExplosion(position, color, scale = 1.0) {
+            const particleCount = 25 * scale;
+            const geo = new THREE.BoxGeometry(0.3 * scale, 0.3 * scale, 0.3 * scale);
             const mat = new THREE.MeshBasicMaterial({ color: color, transparent: true });
             for (let i = 0; i < particleCount; i++) {
                 const p = new THREE.Mesh(geo, mat.clone());
                 p.position.copy(position);
-                const velocity = new THREE.Vector3((Math.random()-0.5)*0.8, (Math.random()-0.5)*0.8, (Math.random()-0.5)*0.8);
+                // Faster, wider spread for torpedoes
+                const spread = 0.8 * scale;
+                const velocity = new THREE.Vector3((Math.random()-0.5)*spread, (Math.random()-0.5)*spread, (Math.random()-0.5)*spread);
                 scene.add(p);
-                particles.push({ mesh: p, velocity: velocity, life: 1.0 });
+                particles.push({ mesh: p, velocity: velocity, life: 1.0 + (Math.random() * 0.5) });
             }
         }
 
@@ -283,6 +287,30 @@
                 laser.position.copy(source.position); laser.quaternion.copy(source.quaternion);
                 scene.add(laser); bullets.push({mesh: laser, life: 120, isPlayer: false});
             }
+        }
+
+        function fireTorpedo() {
+            const geo = new THREE.SphereGeometry(0.6, 8, 8);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+            const torp = new THREE.Mesh(geo, mat);
+            torp.position.copy(player.position);
+            torp.quaternion.copy(player.quaternion);
+            scene.add(torp);
+            torpedoes.push({ 
+                mesh: torp, 
+                dist: 0, 
+                velocity: new THREE.Vector3(0, 0, -TORPEDO_SPEED).applyQuaternion(player.quaternion) 
+            });
+        }
+
+        function createTorpedoTrail(pos) {
+            const pGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+            const pMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true });
+            const p = new THREE.Mesh(pGeo, pMat);
+            p.position.copy(pos);
+            scene.add(p);
+            // Torpedo trail stays longer (0.8 vs original 0.5)
+            particles.push({ mesh: p, velocity: new THREE.Vector3(0,0,0), life: 0.8 });
         }
 
         function animate() {
@@ -371,7 +399,7 @@
                 if(b.isPlayer) {
                     enemies.forEach((en, eIdx) => {
                         if(b.mesh.position.distanceTo(en.mesh.position) < 4) {
-                            createExplosion(en.mesh.position, 0xffff00);
+                            createExplosion(en.mesh.position, 0xffff00, 1.0);
                             scene.remove(en.mesh); enemies.splice(eIdx, 1); b.life = 0;
                         }
                     });
@@ -383,13 +411,42 @@
                 if(b.life <= 0) { scene.remove(b.mesh); bullets.splice(i, 1); }
             }
 
-            // --- Update Particles ---
+            // --- Torpedo Animation & Radial Collision ---
+            for(let i = torpedoes.length - 1; i >= 0; i--) {
+                const t = torpedoes[i];
+                t.mesh.position.add(t.velocity);
+                t.dist += TORPEDO_SPEED;
+                createTorpedoTrail(t.mesh.position);
+
+                let impact = false;
+                // Direct Hit Check
+                enemies.forEach(en => { if(t.mesh.position.distanceTo(en.mesh.position) < 6) impact = true; });
+                obstacles.forEach(ast => { if(t.mesh.position.distanceTo(ast.position) < (ast.geometry.parameters.radius * ast.scale.x + 1)) impact = true; });
+
+                if(impact || t.dist > TORPEDO_RANGE) {
+                    const blastPos = t.mesh.position.clone();
+                    createExplosion(blastPos, 0x00ffff, 3.0); // Big 3x scale boom
+                    
+                    // Radial Damage: Check all enemies within blast radius
+                    for (let eIdx = enemies.length - 1; eIdx >= 0; eIdx--) {
+                        if (blastPos.distanceTo(enemies[eIdx].mesh.position) < TORPEDO_BLAST_RADIUS) {
+                            createExplosion(enemies[eIdx].mesh.position, 0xffff00, 1.0);
+                            scene.remove(enemies[eIdx].mesh);
+                            enemies.splice(eIdx, 1);
+                        }
+                    }
+                    
+                    scene.remove(t.mesh);
+                    torpedoes.splice(i, 1);
+                }
+            }
+
             for (let i = particles.length - 1; i >= 0; i--) {
                 const p = particles[i];
                 p.mesh.position.add(p.velocity);
-                p.life -= 0.02;
+                p.life -= 0.015; // Slower fade for longer presence
                 p.mesh.scale.setScalar(p.life);
-                p.mesh.material.opacity = p.life;
+                p.mesh.material.opacity = Math.min(p.life, 1.0);
                 if (p.life <= 0) {
                     scene.remove(p.mesh);
                     particles.splice(i, 1);
